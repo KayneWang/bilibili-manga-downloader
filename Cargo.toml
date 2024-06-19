@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Kayne <w.zengkai@gmail.com>"]
 description = "哔哩哔哩漫画下载工具"
+readme = "README.md"
+license-file = "LICENSE"
 
 [dependencies]
 dialoguer = "0.11"
