@@ -4,7 +4,9 @@ version = "0.1.1"
 edition = "2021"
 authors = ["Kayne <w.zengkai@gmail.com>"]
 description = "哔哩哔哩漫画下载工具"
+keywords = ["bilibili", "comics", "downloader", "cli"]
 readme = "README.md"
+repository = "https://github.com/KayneWang/bilibili-manga-downloader"
 license-file = "LICENSE"
 
 [dependencies]

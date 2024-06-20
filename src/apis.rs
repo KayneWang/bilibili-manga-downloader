@@ -130,10 +130,12 @@ pub struct Episode {
     pub id: u32,
     pub title: String,
     pub ord: f32,
+    pub is_locked: bool,
 }
 
 pub async fn get_manga_detail(
     manga_id: &u32,
+    cookie: &str,
 ) -> Result<MangaDetailResponse, Box<dyn std::error::Error>> {
     let base_url =
         "https://manga.bilibili.com/twirp/comic.v1.Comic/ComicDetail?device=pc&platform=web";
@@ -141,7 +143,7 @@ pub async fn get_manga_detail(
         "https://manga.bilibili.com/detail/mc{}?from=manga_search",
         &manga_id
     );
-    let headers = get_reqwest_headers(&referer_url, "");
+    let headers = get_reqwest_headers(&referer_url, cookie);
 
     let mut request_body = HashMap::new();
     request_body.insert("comic_id", manga_id.to_string());
