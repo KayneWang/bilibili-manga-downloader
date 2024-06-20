@@ -7,7 +7,7 @@
 ### 安装
 
 ```shell
-$ cargo install
+$ cargo install bili-manga-downloader
 $ bili-manga-downloader
 ```
 
