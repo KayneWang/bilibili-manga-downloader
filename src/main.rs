@@ -120,10 +120,10 @@ async fn get_selected_manga(manga_name: Option<String>) -> Option<SearchMangaIte
     Some(selected_manga.clone())
 }
 
-async fn get_episode_pages(manga_id: &u32) -> Option<Vec<Vec<Episode>>> {
+async fn get_episode_pages(manga_id: &u32, cookie: &str) -> Option<Vec<Vec<Episode>>> {
     let pb = ProgressBar::new_spinner();
     pb.enable_steady_tick(Duration::from_millis(100));
-    let manga_detail = get_manga_detail(manga_id).await;
+    let manga_detail = get_manga_detail(manga_id, cookie).await;
     pb.finish();
 
     if let Err(e) = manga_detail {
@@ -134,7 +134,6 @@ async fn get_episode_pages(manga_id: &u32) -> Option<Vec<Vec<Episode>>> {
     let manga_detail = manga_detail.unwrap();
 
     let mut episode_pages: Vec<Vec<Episode>> = Vec::new();
-
     let mut current_page: Vec<Episode> = Vec::new();
     for (index, episode) in manga_detail.ep_list.iter().enumerate() {
         current_page.push(episode.clone());
@@ -155,17 +154,17 @@ async fn get_episode_pages(manga_id: &u32) -> Option<Vec<Vec<Episode>>> {
 /**
  * 获取用户选择的章节信息.
  */
-fn get_selected_episodes(episode_pages: &Vec<Vec<String>>) -> Option<HashMap<String, Vec<usize>>> {
-    if let Err(e) = enable_raw_mode() {
-        eprintln!("Failed to enable raw mode: {:?}", e);
-        return None;
-    }
-
+fn get_selected_episodes(episode_pages: &Vec<Vec<String>>) -> HashMap<String, Vec<usize>> {
     let mut current_page = 0;
 
     let mut select_episode_map: HashMap<String, Vec<usize>> = HashMap::new();
 
     let mut stdout = io::stdout();
+
+    if let Err(e) = enable_raw_mode() {
+        eprintln!("Failed to enable raw mode: {:?}", e);
+        return select_episode_map;
+    }
 
     loop {
         if let Err(e) = event::read() {
@@ -242,7 +241,7 @@ fn get_selected_episodes(episode_pages: &Vec<Vec<String>>) -> Option<HashMap<Str
 
     disable_raw_mode().unwrap();
 
-    Some(select_episode_map)
+    select_episode_map
 }
 
 #[derive(Parser, Debug)]
@@ -270,7 +269,7 @@ async fn main() {
 
     let selected_manga = selected_manga.unwrap();
 
-    let episode_pages = get_episode_pages(&selected_manga.id).await;
+    let episode_pages = get_episode_pages(&selected_manga.id, &config.cookie).await;
 
     if episode_pages.is_none() {
         return;
@@ -281,18 +280,31 @@ async fn main() {
         .iter()
         .map(|page| {
             page.iter()
-                .map(|episode| format!("[{}]{}", episode.ord.clone(), episode.title.clone()))
+                .map(|episode| {
+                    if episode.is_locked {
+                        return format!(
+                            "[{}]{} {}",
+                            episode.ord.clone(),
+                            episode.title.clone(),
+                            "🔒".red()
+                        );
+                    }
+                    format!(
+                        "[{}]{} {}",
+                        episode.ord.clone(),
+                        episode.title.clone(),
+                        "🔓".green()
+                    )
+                })
                 .collect()
         })
         .collect::<Vec<Vec<String>>>();
 
     let selected_episodes = get_selected_episodes(&episode_pages_selections);
 
-    if selected_episodes.is_none() {
+    if selected_episodes.is_empty() {
         return;
     }
-
-    let selected_episodes = selected_episodes.unwrap();
 
     let mut download_episodes: Vec<Episode> = Vec::new();
     for (page, ep_indexes) in selected_episodes.iter() {
@@ -305,8 +317,16 @@ async fn main() {
 
     let manga_title = get_safe_filename(&selected_manga.title);
     let dest_path = Path::new(&config.download_path).join(&manga_title);
+    // 创建下载目录
     create_desc_dir(&dest_path.to_str().unwrap());
-    let result = do_download_tasks(selected_manga.id, download_episodes, &config.cookie, &dest_path).await;
+
+    let result = do_download_tasks(
+        selected_manga.id,
+        download_episodes,
+        &config.cookie,
+        &dest_path,
+    )
+    .await;
 
     match result {
         Ok(_) => {
