@@ -8,7 +8,7 @@ use std::{
 
 use bytes::Bytes;
 use futures::future::join_all;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use serde::Deserialize;
 use urlencoding::encode;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
@@ -264,41 +264,21 @@ async fn get_image_urls(
     Ok(image_urls)
 }
 
-async fn download_image(image_urls: Vec<String>, title: &str) -> Result<Vec<Bytes>, Box<dyn std::error::Error>> {
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(5));
-    let mut handles = vec![];
-    let progress_bar = ProgressBar::new(image_urls.len() as u64);
-    progress_bar.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}")
-        .expect("Failed to set bar template")
-        .progress_chars("#>-"));
-
-    for url in image_urls {
-        let permit = semaphore.clone().acquire_owned().await?;
-        let pb = progress_bar.clone();
-        let handle = tokio::spawn(async move {
-            let resp = reqwest::get(&url).await;
-            if let Err(e) = resp {
-                drop(permit);
-                return Err(e);
-            }
-            let bytes = resp.unwrap().bytes().await?;
-            drop(permit);
-            pb.inc(1);
-            Ok(bytes)
-        });
-        handles.push(handle);
-    }
-
-    let tasks = join_all(handles).await;
+async fn download_image(image_urls: Vec<String>, pb: &ProgressBar) -> Vec<Bytes> {
     let mut image_bytes = vec![];
-
-    for task in tasks {
-        let bytes = task??;
-        image_bytes.push(bytes);
+    for url in image_urls {
+        let resp = reqwest::get(&url).await;
+        if let Err(_) = resp {
+            return vec![];
+        }
+        let bytes = resp.unwrap().bytes().await;
+        if let Err(_) = bytes {
+            return vec![];
+        }
+        image_bytes.push(bytes.unwrap());
+        pb.inc(1);
     }
-    progress_bar.finish_with_message(format!("{} 下载完成", title));
-    Ok(image_bytes)
+    image_bytes
 }
 
 async fn create_zip(
@@ -322,28 +302,63 @@ pub async fn do_download_tasks(
     episodes: Vec<Episode>,
     cookie: &str,
     dest_path: &PathBuf,
-) -> Result<(), Box<dyn std::error::Error>> {
-    for episode in episodes {
-        let image_urls = get_image_urls(manga_id, episode.id, cookie).await?;
-        let dest_path = PathBuf::from(dest_path).join(format!(
-            "[{}]{}.zip",
-            episode.ord,
-            get_safe_filename(&episode.title)
-        ));
+) -> Vec<String> {
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(6));
+    let mut handles = vec![];
+    let multi_progress = MultiProgress::new();
+    let mut failed_message = vec![];
 
-        match download_image(image_urls, &episode.title).await {
-            Ok(image_bytes) => {
-                if let Err(e) = create_zip(image_bytes, &dest_path).await {
-                    println!("{} 下载失败: {}", episode.title, e);
-                    continue;
-                }
+    for episode in episodes {
+        let filename = format!("[{}]{}.zip", episode.ord, get_safe_filename(&episode.title));
+        let image_urls = get_image_urls(manga_id, episode.id, cookie).await;
+        if let Err(e) = image_urls {
+            let error_msg = format!("{} 图片地址获取失败: {}", &filename, e);
+            failed_message.push(error_msg);
+            continue;
+        }
+
+        let image_urls = image_urls.unwrap();
+        let dest_path = PathBuf::from(dest_path).join(&filename);
+        let permit = semaphore.clone().acquire_owned().await.unwrap();
+        let pb = multi_progress.add(ProgressBar::new(image_urls.len() as u64));
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}",
+                )
+                .expect("Failed to set bar template")
+                .progress_chars("#>-"),
+        );
+        pb.set_message(format!("{} 下载中", filename));
+
+        let handle = tokio::spawn(async move {
+            let result = download_image(image_urls, &pb).await;
+
+            drop(permit);
+
+            if result.is_empty() {
+                let error_msg = format!("{} 下载失败", filename);
+                pb.finish_with_message(error_msg.clone());
+                return Err(error_msg);
             }
-            Err(e) => {
-                println!("{} 下载失败: {}", episode.title, e);
-                continue;
+            if let Err(e) = create_zip(result, &dest_path).await {
+                let error_msg = format!("{} 创建压缩文件失败: {}", filename, e);
+                pb.finish_with_message(error_msg.clone());
+                return Err(error_msg);
             }
+
+            pb.finish_with_message(format!("{} 下载完成", filename));
+            Ok(())
+        });
+        handles.push(handle);
+    }
+
+    let results = join_all(handles).await;
+    for result in results {
+        if let Err(e) = result.unwrap() {
+            failed_message.push(e);
         }
     }
 
-    Ok(())
+    failed_message
 }
