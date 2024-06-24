@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     fs,
-    io::{self, Write},
+    io::{self},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -175,24 +175,27 @@ fn get_selected_episodes(episode_pages: &Vec<Vec<String>>) -> HashMap<String, Ve
         execute!(stdout, MoveTo(0, 0)).unwrap();
         execute!(stdout, Clear(ClearType::All)).unwrap();
 
-        writeln!(stdout, "****** 章节预览 ******").unwrap();
-        writeln!(
-            stdout,
-            "{}",
-            "使用上下箭头翻页，按 Enter 进入选择，按 q 结束选择.".cyan()
-        )
-        .unwrap();
+        println!("{}", "****** 操作说明 ******".blue());
+        println!("- {}", "使用上下箭头翻页".cyan());
+        println!("- {}", "Enter 进入选择".cyan());
+        println!("- {}", "a 全选".cyan());
+        println!("- {}", "空格 确认选择".cyan());
 
+        println!("{}", "****** 章节预览 ******".blue());
+        let mut default_select = vec![];
         for (index, item) in episode_pages[current_page].iter().enumerate() {
             let selected_episodes = select_episode_map.get(&current_page.to_string());
             if selected_episodes.is_none() {
-                writeln!(stdout, "{}", item).unwrap();
+                println!("{}", item);
+                default_select.push(false);
             } else {
                 let selected_episodes = selected_episodes.unwrap();
                 if selected_episodes.contains(&index) {
-                    writeln!(stdout, "{} {}", item, "\u{2713}".green()).unwrap();
+                    println!("{} {}", item, "\u{2713}".green());
+                    default_select.push(true);
                 } else {
-                    writeln!(stdout, "{}", item).unwrap();
+                    println!("{}", item);
+                    default_select.push(false);
                 }
             }
         }
@@ -214,7 +217,6 @@ fn get_selected_episodes(episode_pages: &Vec<Vec<String>>) -> HashMap<String, Ve
                         current_page = 0;
                     }
                 }
-                KeyCode::Char('q') => break,
                 KeyCode::Enter => {
                     execute!(stdout, MoveTo(0, 0)).unwrap();
                     execute!(stdout, Clear(ClearType::All)).unwrap();
@@ -222,8 +224,9 @@ fn get_selected_episodes(episode_pages: &Vec<Vec<String>>) -> HashMap<String, Ve
                     disable_raw_mode().unwrap();
 
                     let selection = MultiSelect::with_theme(&ColorfulTheme::default())
-                        .with_prompt("按'空格'选中章节 (Enter 确认选择, ESC 退出选择)")
+                        .with_prompt("按 '空格' 选中章节 (Enter 确认选择, ESC/q 退出选择)")
                         .items(&episode_pages[current_page])
+                        .defaults(&default_select)
                         .interact_opt();
 
                     let selection = selection.unwrap();
@@ -233,6 +236,14 @@ fn get_selected_episodes(episode_pages: &Vec<Vec<String>>) -> HashMap<String, Ve
                     }
 
                     enable_raw_mode().unwrap();
+                }
+                KeyCode::Char(' ') => break,
+                KeyCode::Char('a') => {
+                    let mut all_select = vec![];
+                    for (index, _) in episode_pages[current_page].iter().enumerate() {
+                        all_select.push(index);
+                    }
+                    select_episode_map.insert(current_page.to_string(), all_select);
                 }
                 _ => {}
             }
@@ -315,12 +326,17 @@ async fn main() {
         }
     }
 
+    if download_episodes.is_empty() {
+        return;
+    }
+
     let manga_title = get_safe_filename(&selected_manga.title);
     let dest_path = Path::new(&config.download_path).join(&manga_title);
     // 创建下载目录
     create_desc_dir(&dest_path.to_str().unwrap());
 
-    let result = do_download_tasks(
+    // 获取下载失败提示信息
+    let failed_message = do_download_tasks(
         selected_manga.id,
         download_episodes,
         &config.cookie,
@@ -328,12 +344,12 @@ async fn main() {
     )
     .await;
 
-    match result {
-        Ok(_) => {
-            println!("{}", format!("{:?} 下载完成", dest_path).green());
-        }
-        Err(e) => {
-            println!("{}", format!("{:?} 下载失败: {}", dest_path, e).red());
-        }
+    if failed_message.is_empty() {
+        println!("{}", "所有章节下载完成".green());
+        return;
+    }
+
+    for message in failed_message {
+        println!("{}", message.red());
     }
 }
