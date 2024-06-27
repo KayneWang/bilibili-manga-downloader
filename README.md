@@ -2,6 +2,11 @@
 
 通过 cli 的形式，将在哔漫已经购买过的漫画下载到本地，未购买的漫画无法下载全部图片.
 
+## 预览
+
+<img src="https://github.com/KayneWang/bilibili-manga-downloader/blob/main/doc/step1.png" alt="step1">
+<img src="https://github.com/KayneWang/bilibili-manga-downloader/blob/main/doc/step2.png" alt="step2">
+
 ## 使用方法
 
 ### 安装
